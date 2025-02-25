@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Arduino MQTT Data</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
+</head>
+<body>
+    <h1>Arduino Sensor Data</h1>
+    <div id="sensorData">Waiting for data...</div>
+
+    <script>
+        // Shiftr.io MQTT client setup
+        const client = new Paho.MQTT.Client(
+            "joesdevices.cloud.shiftr.io",  // Your Shiftr.io namespace
+            443,                              // WSS port for Shiftr.io
+            "web_client_" + Math.random().toString(16).substr(2, 8)
+        );
+
+        // Connect options with Shiftr.io credentials
+        const options = {
+            useSSL: true,
+            userName: "joesdevices",
+            password: "NAjOK6Eni6E9mcu3",
+            timeout: 3,
+            onSuccess: onConnect,
+            onFailure: function(message) {
+                console.log("Connection failed: " + message.errorMessage);
+            }
+        };
+
+        // Connect to broker
+        client.connect(options);
+
+        // Handle connection
+        function onConnect() {
+            console.log("Connected to Shiftr.io MQTT broker");
+            client.subscribe("arduino/sensor");
+        }
+
+        // Handle incoming messages
+        client.onMessageArrived = function(message) {
+            try {
+                const data = JSON.parse(message.payloadString);
+                document.getElementById("sensorData").innerHTML = 
+                    `Sensor Value: ${data.value}<br>
+                     Timestamp: ${data.timestamp}`;
+            } catch (e) {
+                console.error("Error parsing message:", e);
+            }
+        };
+
+        // Handle connection loss
+        client.onConnectionLost = function(responseObject) {
+            if (responseObject.errorCode !== 0) {
+                console.log("Connection lost: " + responseObject.errorMessage);
+            }
+        };
+    </script>
+</body>
+</html>
