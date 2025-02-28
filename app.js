@@ -2,8 +2,8 @@
 const broker = 'wss://joesdevices.cloud.shiftr.io:443';
 const options = {
     clean: true,
-    connectTimeout: 4000,
-    clientId: 'webClient-' + Math.floor(Math.random()*1000000),
+    connectTimeout: 10000,
+    clientId: 'joe_webClient-' + Math.floor(Math.random()*1000000),
     username: 'joesdevices',
     password: 'NAjOK6Eni6E9mcu3' //shiftr token
 };
@@ -16,7 +16,7 @@ const MAX_HISTORY = 1000;
 const UPDATE_INTERVAL = 10000;
 
 document.addEventListener('DOMContentLoaded', function() {
-    console.log("Initializing dashboard...");
+    console.log("Initializing...");
     setupCharts();
     initializeFilterButtons();
     initializeDeviceActions();
@@ -24,13 +24,14 @@ document.addEventListener('DOMContentLoaded', function() {
     updateDateTime();
     setInterval(updateDateTime, 60000);
     
-    // Set initial update timestamps
+    //initial update timestamps
     lastCurrentNoiseUpdate = Date.now();
     lastChartUpdate = Date.now();
     lastDailyAverageUpdate = Date.now();
     
-    // Initialize MQTT connection
+    //initialize MQTT
     initializeMQTT();
+    document.querySelector('.mqtt-status').style.display = 'none';
 });
 
 
@@ -55,12 +56,10 @@ function initializeMQTT() {
     updateConsoleStatus("Connecting to MQTT broker...");
     
     mqttClient = mqtt.connect(broker, options);
-    
     mqttClient.on('connect', () => {
         console.log('Connected to MQTT broker');
         updateConsoleStatus("Connected to MQTT broker");
-        
-        // Update MQTT status indicator in the UI
+        // update MQTT status
         const statusIndicator = document.querySelector('.mqtt-status .status-indicator');
         const statusText = document.querySelector('.mqtt-status .status-text');
         if (statusIndicator) statusIndicator.classList.add('connected');
@@ -87,7 +86,7 @@ function initializeMQTT() {
         console.error('MQTT Error:', error);
         updateConsoleStatus("MQTT Error: " + error.message);
         
-        // Update MQTT status indicator
+        // update MQTT status
         const statusIndicator = document.querySelector('.mqtt-status .status-indicator');
         const statusText = document.querySelector('.mqtt-status .status-text');
         if (statusIndicator) statusIndicator.classList.remove('connected');
@@ -97,7 +96,7 @@ function initializeMQTT() {
     mqttClient.on('close', () => {
         updateConsoleStatus("MQTT connection closed");
         
-        // Update MQTT status indicator
+        // update MQTT status
         const statusIndicator = document.querySelector('.mqtt-status .status-indicator');
         const statusText = document.querySelector('.mqtt-status .status-text');
         if (statusIndicator) statusIndicator.classList.remove('connected');
@@ -107,7 +106,7 @@ function initializeMQTT() {
     mqttClient.on('offline', () => {
         updateConsoleStatus("MQTT connection offline");
         
-        // Update MQTT status indicator
+        // update MQTT status
         const statusIndicator = document.querySelector('.mqtt-status .status-indicator');
         const statusText = document.querySelector('.mqtt-status .status-text');
         if (statusIndicator) statusIndicator.classList.remove('connected');
@@ -115,50 +114,46 @@ function initializeMQTT() {
     });
 }
 
-// Variables to track last update times
 let lastCurrentNoiseUpdate = 0;
 let lastChartUpdate = 0;
 let lastDailyAverageUpdate = 0;
-const CURRENT_NOISE_UPDATE_INTERVAL = 5000; // 5 seconds
-const CHART_UPDATE_INTERVAL = 5000; // 5 seconds
-const DAILY_AVERAGE_UPDATE_INTERVAL = 60000; // 60 seconds
+const CURRENT_NOISE_UPDATE_INTERVAL = 10000; 
+const CHART_UPDATE_INTERVAL = 10000;
+const DAILY_AVERAGE_UPDATE_INTERVAL = 60000;
 
 function handleNoiseLevel(value) {
     if (isNaN(value)) return;
     
     const previousLevel = currentNoiseLevel;
     currentNoiseLevel = value;
-
-    // Add timestamp to the data point
+    // add timestamp
     const timestamp = new Date();
     noiseHistory.push({
         time: timestamp,
         value: value
-    });
-    
-    //keep last 100 points
+    }); 
+
     if (noiseHistory.length > MAX_HISTORY) {
         noiseHistory.shift();
     }
-
-    // Always update the console with real-time data
+    //update console
     updateConsoleStatus(`Noise Level: ${value.toFixed(1)} dB`);
     
     const now = Date.now();
     
-    // Update chart every 5 seconds
+    // update chart
     if (now - lastChartUpdate >= CHART_UPDATE_INTERVAL) {
         updateNoiseChart();
         lastChartUpdate = now;
     }
     
-    // Update Current Noise Level only every 5 seconds
+    // update Current Noise Level
     if (now - lastCurrentNoiseUpdate >= CURRENT_NOISE_UPDATE_INTERVAL) {
         updateCurrentNoiseLevel(value, previousLevel);
         lastCurrentNoiseUpdate = now;
     }
     
-    // Update Daily Average only every 60 seconds
+    // update Daily Average
     if (now - lastDailyAverageUpdate >= DAILY_AVERAGE_UPDATE_INTERVAL) {
         updateDailyAverage();
         lastDailyAverageUpdate = now;
@@ -221,14 +216,12 @@ function updateConsoleStatus(message) {
     entry.className = 'console-entry latest';
     entry.textContent = `${timestamp} ${message}`;
 
-    // 移除前一个最新条目的标记
     const previousLatest = consoleList.querySelector('.latest');
     if (previousLatest) {
         previousLatest.classList.remove('latest');
     }
     consoleList.insertBefore(entry, consoleList.firstChild);
 
-    // 保持最多10条记录
     while (consoleList.children.length > 4) {
         consoleList.removeChild(consoleList.lastChild);
     }
@@ -310,14 +303,14 @@ function setupCharts() {
     const canvas = document.getElementById('noiseChart');
     const ctx = canvas.getContext('2d');
   
-    // Create a vertical gradient from the top (0) to the bottom (canvas.height)
+    //gradient
     const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
-    gradient.addColorStop(0, 'rgb(92, 187, 255)');   // Top color (opaque)
-    gradient.addColorStop(1, 'rgb(118, 118, 255)'); // Bottom color (transparent)
+    gradient.addColorStop(0, 'rgb(92, 187, 255)');
+    gradient.addColorStop(1, 'rgb(118, 118, 255)');
 
     const gradientfill = ctx.createLinearGradient(0, 0, 0, canvas.height);
-    gradientfill.addColorStop(0, 'rgba(45, 146, 247, 0.4)');   // Top color (opaque)
-    gradientfill.addColorStop(1, 'rgba(134, 118, 255, 0.4)'); // Bottom color (transparent)
+    gradientfill.addColorStop(0, 'rgba(45, 146, 247, 0.4)');
+    gradientfill.addColorStop(1, 'rgba(134, 118, 255, 0.4)');
   
     noiseChart = new Chart(ctx, {
       type: 'line',
@@ -325,13 +318,12 @@ function setupCharts() {
         labels: [],
         datasets: [{
           label: '',
-          // Point styling
-          pointRadius: 0,                    // Size of points
-          pointBackgroundColor: gradient,     // Fill color of points
-          pointHitRadius: 4,             // Border width of point
+          pointRadius: 0,         
+          pointBackgroundColor: gradient, 
+          pointHitRadius: 4, 
           data: [],
-          borderColor: gradient,  // Use the vertical gradient for the line color
-          borderWidth: 2,         // Customize the line width (3 pixels)
+          borderColor: gradient,
+          borderWidth: 2,
           backgroundColor: gradientfill,
           fill: true,
           tension: 0.5
@@ -350,69 +342,68 @@ function setupCharts() {
         },
         scales: {
           x: {
-            type: 'time',              // use the time scale
+            type: 'time', 
             time: {
               unit: 'minute',  
               displayFormats: {
-                minute: 'h:mm a'         // or 'HH:mm' if you prefer 24-hour format
+                minute: 'h:mm a'         //'HH:mm' in 24hr format
               }
             },
-            // Force the chart to always show midnight to midnight for "today"
-            // or any 24-hour period you prefer:
-            //min: new Date(new Date().setHours(0, 0, 0, 0)),   // today at 00:00
-            //max: new Date(new Date().setHours(1, 0, 0, 0)),  // today at 24:00 (midnight next day)
+            // 24hr
+            //min: new Date(new Date().setHours(0, 0, 0, 0)),   // today 00:00
+            //max: new Date(new Date().setHours(1, 0, 0, 0)),  // today 24:00
             
-            // If you want a dynamic 24 hrs from "now", you could do:
+            //a dynamic 24 hrs from now
             min: Date.now() - 0.2 * 60 * 60 * 1000,
             max: Date.now(),
             grid: {
                 display: true,
-                color: 'rgba(131, 131, 131, 0.1)',  // Grid line color
-                drawBorder: false,  // Hide the axis line
-                tickColor: 'rgba(131, 131, 131, 0.2)'  // Color of the tick marks
+                color: 'rgba(131, 131, 131, 0.1)', 
+                drawBorder: false, 
+                tickColor: 'rgba(131, 131, 131, 0.2)'
             },
             ticks: {
                 source: 'data',
                 autoSkip: true,
                 maxRotation: 0,
                 maxTicksLimit: 5,
-                color: 'rgba(131, 131, 131, 0.8)',  // Tick label color
+                color: 'rgba(131, 131, 131, 0.8)',
                 font: {
                     family: "'HarmonyOS Sans-Medium', sans-serif",
                     size: 12
                 },
-                padding: 8  // Space between tick and label
+                padding: 8 
             },
             border: {
-                display: false  // Hide axis line
+                display: false
             }
           },
           y: {
-            beginAtZero: true,
+            beginAtZero: false,
             title: {
               display: true,
               text: 'Noise (dB)'
             },
             grid: {
                 display: true,
-                color: 'rgba(131, 131, 131, 0.1)',  // Grid line color
-                drawBorder: false,  // Hide the axis line
-                tickColor: 'rgba(131, 131, 131, 0.2)'  // Color of the tick marks
+                color: 'rgba(131, 131, 131, 0.1)', 
+                drawBorder: false, 
+                tickColor: 'rgba(131, 131, 131, 0.2)' 
             },
             ticks: {
                 source: 'data',
                 autoSkip: true,
                 maxRotation: 0,
                 maxTicksLimit: 6,
-                color: 'rgba(131, 131, 131, 0.8)',  // Tick label color
+                color: 'rgba(131, 131, 131, 0.8)',
                 font: {
                     family: "'HarmonyOS Sans-Medium', sans-serif",
                     size: 12
                 },
-                padding: 8  // Space between tick and label
+                padding: 8  
             },
             border: {
-                display: false  // Hide axis line
+                display: false 
             }
           }
         }
@@ -427,7 +418,7 @@ function updateNoiseChart() {
         y: item.value
     }));
     
-    // Update the time window
+    //update the time window
     const now = Date.now();
     noiseChart.options.scales.x.min = now - 0.2 * 60 * 60 * 1000;
     noiseChart.options.scales.x.max = now;
@@ -435,13 +426,11 @@ function updateNoiseChart() {
 }
 
 
-// Commented out simulateSensorData function as we're now using real MQTT data
+// simulate SensorData function
 /*
 function simulateSensorData() {
     console.log("Starting sensor data simulation...");
-    // Generate initial data point
     handleNoiseLevel(Math.random() * 10 + 40); 
-    // Set up interval for subsequent data points
     setInterval(() => {
         handleNoiseLevel(Math.random() * 10 + 40);
     }, UPDATE_INTERVAL);

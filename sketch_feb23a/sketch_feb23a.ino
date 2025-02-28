@@ -18,15 +18,16 @@ float noiseReadings[MA_SIZE];
 int readingIndex = 0;
 
 // WiFi credentials
-const char ssid[] = "Apt-25B";
-const char pass[] = "newyorker";
+const char ssid[] = SECRET_SSID;
+const char pass[] = SECRET_PASS;
 
 // MQTT configuration
 const char broker[] = "joesdevices.cloud.shiftr.io";
 const int mqtt_port = 1883;
 const char mqtt_username[] = "joesdevices";
 const char mqtt_password[] = "NAjOK6Eni6E9mcu3";
-const char clientId[] = "arduino_noise_monitor";
+const char clientId[] = "joess_sound_sensor";
+
 
 WiFiClient wifiClient;
 MqttClient mqttClient(wifiClient);
