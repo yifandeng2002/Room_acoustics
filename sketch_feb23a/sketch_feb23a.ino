@@ -1,54 +1,58 @@
 #include <WiFiNINA.h>
 #include <ArduinoMqttClient.h>
+#include <ArduinoJson.h>
+#include "arduinoFFT.h"
 #include "arduino_secrets.h"
 
-// MAX9814 configuration
 const int AUDIO_IN_PIN = A0;    
 const int MAX9814_GAIN_PIN = 4; 
 const float VCC = 3.3;          
 const int ADC_MAX_VALUE = 1024; 
 
-// Audio sampling configuration
-const int SAMPLE_WINDOW = 50;    
-const int BUFFER_SIZE = 128;     
+const int SAMPLE_WINDOW = 50;
 
-// Moving average for noise level
 const int MA_SIZE = 5;
 float noiseReadings[MA_SIZE];
 int readingIndex = 0;
 
-// WiFi credentials
+// wifi
 const char ssid[] = SECRET_SSID;
 const char pass[] = SECRET_PASS;
 
-// MQTT configuration
+// mqtt
 const char broker[] = "joesdevices.cloud.shiftr.io";
 const int mqtt_port = 1883;
 const char mqtt_username[] = "joesdevices";
 const char mqtt_password[] = "NAjOK6Eni6E9mcu3";
-const char clientId[] = "joess_sound_sensor";
+const char clientId[] = "joes_sound_analyzer";
+const char* NOISE_LEVEL_TOPIC = "noise/level";
+const char* FREQ_RESPONSE_TOPIC = "audio/frequency_response";
 
+// fft
+const uint16_t samples = 128;
+const double samplingFrequency = 20000; 
+const unsigned int sampling_period_us = round(1000000 * (1.0 / samplingFrequency));
+double vReal[samples];
+double vImag[samples];
+ArduinoFFT<double> FFT = ArduinoFFT<double>(vReal, vImag, samples, samplingFrequency);
 
+// number of frequency bins
+const int freqBins = samples / 2;
+
+// clients
 WiFiClient wifiClient;
 MqttClient mqttClient(wifiClient);
 
-// Topic for publishing
-const char* NOISE_LEVEL_TOPIC = "noise/level";
-
-// Timing variables
-unsigned long lastSend = 0;
-const int sendInterval = 1000;  
+unsigned long lastSendTime = 0;
+const int sendInterval = 1000; // every 1 second
 
 void setup() {
     Serial.begin(115200);
     while (!Serial && millis() < 5000);
-    
-    Serial.println("Initializing noise monitor...");
-    
+    Serial.println("Initializing sensor...");  
     setupMAX9814();
     initializeWiFi();
     
-    // Try MQTT connection with retries
     int retryCount = 0;
     const int maxRetries = 3;
     
@@ -61,12 +65,6 @@ void setup() {
         Serial.print(retryCount);
         Serial.println(" of 3");
         delay(5000);
-    }
-    
-    if (retryCount >= maxRetries) {
-        Serial.println("Failed to connect to MQTT after 3 attempts. Restarting...");
-        delay(1000);
-        NVIC_SystemReset();  // Reset the board
     }
     
     for (int i = 0; i < MA_SIZE; i++) {
@@ -97,12 +95,15 @@ void loop() {
     
     mqttClient.poll();
     
-    if (millis() - lastSend >= sendInterval) {
+    if (millis() - lastSendTime >= sendInterval) {
+        // send noise level
         float noiseLevel = measureNoiseLevel();
-        if (!sendNoiseData(noiseLevel)) {
-            Serial.println("Failed to send noise data!");
-        }
-        lastSend = millis();
+        sendNoiseData(noiseLevel);
+
+        // fft analysis + send frequency data
+        performFFTAnalysis();
+        
+        lastSendTime = millis();
     }
 }
 
@@ -148,8 +149,78 @@ bool sendNoiseData(float noiseLevel) {
         return false;
     }
     
-    Serial.print("Noise Level (dB SPL): ");
+    Serial.print("Sound Level: ");
     Serial.println(noiseLevel);
+    return true;
+}
+
+void performFFTAnalysis() {
+    unsigned long microseconds;
+    // sample audio input
+    microseconds = micros();
+    for (int i = 0; i < samples; i++) {
+        vReal[i] = analogRead(AUDIO_IN_PIN);
+        vImag[i] = 0;
+        
+        while (micros() - microseconds < sampling_period_us) {
+        }
+        microseconds += sampling_period_us;
+    }
+    
+    // fft
+    FFT.windowing(FFTWindow::Hamming, FFTDirection::Forward);
+    FFT.compute(FFTDirection::Forward);
+    FFT.complexToMagnitude();
+    
+    // send 20 sample points
+    const int numPoints = 20;
+    const float maxFreq = 20000.0;
+    
+    StaticJsonDocument<512> doc;
+    
+    JsonArray freqArray = doc.createNestedArray("frequencies");
+    JsonArray magArray = doc.createNestedArray("magnitudes");
+    
+    for (int i = 0; i < numPoints; i++) {
+        // skip 1st point
+        int index = 2 + i * ((freqBins - 1) / numPoints);
+        if (index >= freqBins) index = freqBins - 1;  
+        float frequency = (index * samplingFrequency) / samples;
+        float magnitude = vReal[index]; 
+        
+        freqArray.add(int(frequency));
+        magArray.add(int(magnitude));
+    }
+    
+    doc["timestamp"] = millis();
+    
+    // send freq data
+    sendFrequencyDataMQTT(doc);
+}
+
+bool sendFrequencyDataMQTT(JsonDocument& doc) {
+    if (!mqttClient.connected()) {
+        Serial.println("MQTT disconnected, cannot send data");
+        return false;
+    }
+    
+    String jsonString;
+    serializeJson(doc, jsonString);
+    Serial.println("Sending JSON: " + jsonString);
+    
+    if (!mqttClient.beginMessage(FREQ_RESPONSE_TOPIC)) {
+        Serial.println("Failed to begin MQTT message");
+        return false;
+    }
+    
+    mqttClient.print(jsonString);
+    
+    if (!mqttClient.endMessage()) {
+        Serial.println("Failed to end MQTT message");
+        return false;
+    }
+    
+    Serial.println("Frequency data sent");
     return true;
 }
 
@@ -178,11 +249,11 @@ bool initializeMQTT() {
     Serial.print("Client ID: ");
     Serial.println(clientId);
     
-    // Set MQTT connection properties
+    // set mqtt connection
     mqttClient.setId(clientId);
     mqttClient.setUsernamePassword(mqtt_username, mqtt_password);
     
-    // Connect with timeout
+    // timeout
     Serial.println("Connecting to broker...");
     if (!mqttClient.connect(broker, mqtt_port)) {
         Serial.print("MQTT connection failed! Error code = ");

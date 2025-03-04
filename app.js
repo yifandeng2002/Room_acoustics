@@ -1,4 +1,4 @@
-//MQTT
+//mqtt
 const broker = 'wss://joesdevices.cloud.shiftr.io:443';
 const options = {
     clean: true,
@@ -15,8 +15,13 @@ let currentNoiseLevel = 0;
 const MAX_HISTORY = 1000; 
 const UPDATE_INTERVAL = 10000;
 
+// topics
+const NOISE_LEVEL_TOPIC = 'noise/level';
+const FREQ_RESPONSE_TOPIC = 'audio/frequency_response';
+
 document.addEventListener('DOMContentLoaded', function() {
     console.log("Initializing...");
+    updateConsoleStatus("Initializing dashboard...");
     setupCharts();
     initializeFilterButtons();
     initializeDeviceActions();
@@ -29,10 +34,11 @@ document.addEventListener('DOMContentLoaded', function() {
     lastChartUpdate = Date.now();
     lastDailyAverageUpdate = Date.now();
     
-    //initialize MQTT
     initializeMQTT();
+
     document.querySelector('.mqtt-status').style.display = 'none';
 });
+
 
 
 function updateDateTime() {
@@ -52,68 +58,90 @@ function updateDateTime() {
     }
 }
 
+
 function initializeMQTT() {
     updateConsoleStatus("Connecting to MQTT broker...");
+    
+    //update mqtt status bar
+    const statusIndicator = document.querySelector('#mqtt-status .status-indicator');
+    const statusText = document.querySelector('#mqtt-status .status-text');
+    if (statusIndicator) statusIndicator.classList.remove('connected');
+    if (statusText) statusText.textContent = "Connecting to device...";
     
     mqttClient = mqtt.connect(broker, options);
     mqttClient.on('connect', () => {
         console.log('Connected to MQTT broker');
         updateConsoleStatus("Connected to MQTT broker");
-        // update MQTT status
-        const statusIndicator = document.querySelector('.mqtt-status .status-indicator');
-        const statusText = document.querySelector('.mqtt-status .status-text');
         if (statusIndicator) statusIndicator.classList.add('connected');
         if (statusText) statusText.textContent = "Connected to device";
         
-        mqttClient.subscribe('noise/level', (err) => {
+        // subscribe to noise level
+        mqttClient.subscribe(NOISE_LEVEL_TOPIC, (err) => {
             if (err) {
                 console.error('Subscription error:', err);
-                updateConsoleStatus("Failed to subscribe: " + err.message);
+                updateConsoleStatus("Failed to subscribe to noise data: " + err.message);
             } else {
                 updateConsoleStatus("Subscribed to noise data");
             }
         });
-    });
+        
+        // subscribe to frequency response
+        mqttClient.subscribe(FREQ_RESPONSE_TOPIC, (err) => {
+            if (err) {
+                console.error('Subscription error:', err);
+                updateConsoleStatus("Failed to subscribe to frequency data: " + err.message);
+            } else {
+                updateConsoleStatus("Subscribed to frequency data");
+            }
+        });
 
-    mqttClient.on('message', (topic, message) => {
-        console.log('Received:', topic, message.toString());
-        if (topic === 'noise/level') {
-            handleNoiseLevel(parseFloat(message.toString()));
+// message handler for mqtt client
+mqttClient.on('message', (topic, message) => {
+    const messageStr = message.toString();
+    console.log(`Received message on topic ${topic}: ${messageStr}`);
+
+    if (topic === NOISE_LEVEL_TOPIC) {
+        try {
+            const noiseValue = parseFloat(messageStr);
+            if (!isNaN(noiseValue)) {
+                handleNoiseLevel(noiseValue);
+            } else {
+                console.error('Invalid noise level value:', messageStr);
+            }
+        } catch (error) {
+            console.error('Error processing noise level:', error);
         }
+    } else if (topic === FREQ_RESPONSE_TOPIC) {
+        try {
+            handleFrequencyData(messageStr);
+        } catch (error) {
+            console.error('Error processing frequency data:', error);
+        }
+    }
+});
     });
 
     mqttClient.on('error', (error) => {
         console.error('MQTT Error:', error);
         updateConsoleStatus("MQTT Error: " + error.message);
         
-        // update MQTT status
-        const statusIndicator = document.querySelector('.mqtt-status .status-indicator');
-        const statusText = document.querySelector('.mqtt-status .status-text');
+        // update mqtt status
         if (statusIndicator) statusIndicator.classList.remove('connected');
         if (statusText) statusText.textContent = "Connection error";
     });
 
     mqttClient.on('close', () => {
         updateConsoleStatus("MQTT connection closed");
-        
-        // update MQTT status
-        const statusIndicator = document.querySelector('.mqtt-status .status-indicator');
-        const statusText = document.querySelector('.mqtt-status .status-text');
         if (statusIndicator) statusIndicator.classList.remove('connected');
         if (statusText) statusText.textContent = "Disconnected";
     });
 
     mqttClient.on('offline', () => {
         updateConsoleStatus("MQTT connection offline");
-        
-        // update MQTT status
-        const statusIndicator = document.querySelector('.mqtt-status .status-indicator');
-        const statusText = document.querySelector('.mqtt-status .status-text');
         if (statusIndicator) statusIndicator.classList.remove('connected');
         if (statusText) statusText.textContent = "Offline";
     });
 }
-
 let lastCurrentNoiseUpdate = 0;
 let lastChartUpdate = 0;
 let lastDailyAverageUpdate = 0;
@@ -126,7 +154,7 @@ function handleNoiseLevel(value) {
     
     const previousLevel = currentNoiseLevel;
     currentNoiseLevel = value;
-    // add timestamp
+    // timestamp
     const timestamp = new Date();
     noiseHistory.push({
         time: timestamp,
@@ -158,6 +186,9 @@ function handleNoiseLevel(value) {
         updateDailyAverage();
         lastDailyAverageUpdate = now;
     }
+    
+    // Update device status indicators
+    updateDeviceStatus("input1", value);
 }
 
 function updateCurrentNoiseLevel(value, previousLevel) {
@@ -173,6 +204,22 @@ function updateCurrentNoiseLevel(value, previousLevel) {
         noiseChangeElement.textContent = `${Math.abs(change)}%`;
         noiseChangeElement.classList.remove('increase', 'decrease');
         noiseChangeElement.classList.add(change >= 0 ? 'increase' : 'decrease');
+    }
+}
+
+function updateDeviceStatus(deviceId, value) {
+    const deviceItem = document.querySelector(`.device-item[data-device-id="${deviceId}"]`);
+    if (!deviceItem) return;
+    
+    const statusIndicator = deviceItem.querySelector('.device-status');
+    const valueDisplay = deviceItem.querySelector('.device-value');
+    
+    if (statusIndicator) {
+        statusIndicator.classList.add('active');
+    }
+    
+    if (valueDisplay) {
+        valueDisplay.textContent = `${value.toFixed(1)} dB`;
     }
 }
 
@@ -202,6 +249,16 @@ function updateDailyAverage() {
         
         if (avgElement) {
             avgElement.textContent = `${average.toFixed(1)} dB`;
+        }
+        
+        // calculate quiet hours(<50dB)
+        const quietThreshold = 50;
+        const quietHours = todayReadings.filter(reading => reading.value < quietThreshold).length / 
+                           todayReadings.length * 100;
+        
+        const quietHoursElement = document.querySelector('.stat-card:nth-child(4) .stat-value');
+        if (quietHoursElement) {
+            quietHoursElement.textContent = `${quietHours.toFixed(1)}%`;
         }
     }
 }
@@ -300,116 +357,123 @@ function initializeNotifications() {
 
 ///////charts
 function setupCharts() {
-    const canvas = document.getElementById('noiseChart');
-    const ctx = canvas.getContext('2d');
-  
-    //gradient
-    const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
-    gradient.addColorStop(0, 'rgb(92, 187, 255)');
-    gradient.addColorStop(1, 'rgb(118, 118, 255)');
+    const noiseCanvas = document.getElementById('noiseChart');
+    if (noiseCanvas) {
+        const ctx = noiseCanvas.getContext('2d');
+      
+        //gradient
+        const gradient = ctx.createLinearGradient(0, 0, 0, noiseCanvas.height);
+        gradient.addColorStop(0, 'rgb(92, 187, 255)');
+        gradient.addColorStop(1, 'rgb(118, 118, 255)');
 
-    const gradientfill = ctx.createLinearGradient(0, 0, 0, canvas.height);
-    gradientfill.addColorStop(0, 'rgba(45, 146, 247, 0.4)');
-    gradientfill.addColorStop(1, 'rgba(134, 118, 255, 0.4)');
-  
-    noiseChart = new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels: [],
-        datasets: [{
-          label: '',
-          pointRadius: 0,         
-          pointBackgroundColor: gradient, 
-          pointHitRadius: 4, 
-          data: [],
-          borderColor: gradient,
-          borderWidth: 2,
-          backgroundColor: gradientfill,
-          fill: true,
-          tension: 0.5
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-            legend: {
-                display: false
-            },
-            tooltip: {
-                enabled: false
-            }
-        },
-        scales: {
-          x: {
-            type: 'time', 
-            time: {
-              unit: 'minute',  
-              displayFormats: {
-                minute: 'h:mm a'         //'HH:mm' in 24hr format
-              }
-            },
-            // 24hr
-            //min: new Date(new Date().setHours(0, 0, 0, 0)),   // today 00:00
-            //max: new Date(new Date().setHours(1, 0, 0, 0)),  // today 24:00
-            
-            //a dynamic 24 hrs from now
-            min: Date.now() - 0.2 * 60 * 60 * 1000,
-            max: Date.now(),
-            grid: {
-                display: true,
-                color: 'rgba(131, 131, 131, 0.1)', 
-                drawBorder: false, 
-                tickColor: 'rgba(131, 131, 131, 0.2)'
-            },
-            ticks: {
-                source: 'data',
-                autoSkip: true,
-                maxRotation: 0,
-                maxTicksLimit: 5,
-                color: 'rgba(131, 131, 131, 0.8)',
-                font: {
-                    family: "'HarmonyOS Sans-Medium', sans-serif",
-                    size: 12
-                },
-                padding: 8 
-            },
-            border: {
-                display: false
-            }
+        const gradientfill = ctx.createLinearGradient(0, 0, 0, noiseCanvas.height);
+        gradientfill.addColorStop(0, 'rgba(45, 146, 247, 0.4)');
+        gradientfill.addColorStop(1, 'rgba(134, 118, 255, 0.4)');
+      
+        noiseChart = new Chart(ctx, {
+          type: 'line',
+          data: {
+            labels: [],
+            datasets: [{
+              label: '',
+              pointRadius: 0,         
+              pointBackgroundColor: gradient, 
+              pointHitRadius: 4, 
+              data: [],
+              borderColor: gradient,
+              borderWidth: 2,
+              backgroundColor: gradientfill,
+              fill: true,
+              tension: 0.5
+            }]
           },
-          y: {
-            beginAtZero: false,
-            title: {
-              display: true,
-              text: 'Noise (dB)'
-            },
-            grid: {
-                display: true,
-                color: 'rgba(131, 131, 131, 0.1)', 
-                drawBorder: false, 
-                tickColor: 'rgba(131, 131, 131, 0.2)' 
-            },
-            ticks: {
-                source: 'data',
-                autoSkip: true,
-                maxRotation: 0,
-                maxTicksLimit: 6,
-                color: 'rgba(131, 131, 131, 0.8)',
-                font: {
-                    family: "'HarmonyOS Sans-Medium', sans-serif",
-                    size: 12
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: false
                 },
-                padding: 8  
+                tooltip: {
+                    enabled: false
+                }
             },
-            border: {
-                display: false 
+            scales: {
+              x: {
+                type: 'time', 
+                time: {
+                  unit: 'minute',  
+                  displayFormats: {
+                    minute: 'h:mm a'         //'HH:mm' in 24hr format
+                  }
+                },
+                // 24hr
+                //min: new Date(new Date().setHours(0, 0, 0, 0)),   // today 00:00
+                //max: new Date(new Date().setHours(1, 0, 0, 0)),  // today 24:00
+                
+                //a dynamic 24 hrs from now
+                min: Date.now() - 0.2 * 60 * 60 * 1000,
+                max: Date.now(),
+                grid: {
+                    display: true,
+                    color: 'rgba(131, 131, 131, 0.1)', 
+                    drawBorder: false, 
+                    tickColor: 'rgba(131, 131, 131, 0.2)'
+                },
+                ticks: {
+                    source: 'data',
+                    autoSkip: true,
+                    maxRotation: 0,
+                    maxTicksLimit: 5,
+                    color: 'rgba(131, 131, 131, 0.8)',
+                    font: {
+                        family: "'HarmonyOS Sans-Medium', sans-serif",
+                        size: 12
+                    },
+                    padding: 8 
+                },
+                border: {
+                    display: false
+                }
+              },
+              y: {
+                beginAtZero: false,
+                title: {
+                  display: true,
+                  text: 'Noise (dB)'
+                },
+                grid: {
+                    display: true,
+                    color: 'rgba(131, 131, 131, 0.1)', 
+                    drawBorder: false, 
+                    tickColor: 'rgba(131, 131, 131, 0.2)' 
+                },
+                ticks: {
+                    source: 'data',
+                    autoSkip: true,
+                    maxRotation: 0,
+                    maxTicksLimit: 6,
+                    color: 'rgba(131, 131, 131, 0.8)',
+                    font: {
+                        family: "'HarmonyOS Sans-Medium', sans-serif",
+                        size: 12
+                    },
+                    padding: 8  
+                },
+                border: {
+                    display: false 
+                }
+              }
             }
           }
-        }
-      }
-    });
-  }
+        });
+    }
+    
+    // set frequency chart
+    if (typeof setupFrequencyChart === 'function') {
+        setupFrequencyChart();
+    }
+}
 
 function updateNoiseChart() {
     if (!noiseChart) return;
@@ -425,8 +489,7 @@ function updateNoiseChart() {
     noiseChart.update();
 }
 
-
-// simulate SensorData function
+// simulate sensorData function
 /*
 function simulateSensorData() {
     console.log("Starting sensor data simulation...");
