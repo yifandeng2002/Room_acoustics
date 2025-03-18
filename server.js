@@ -1,126 +1,157 @@
 const express = require('express');
-const mqtt = require('mqtt');
-const fs = require('fs').promises;  // 使用 promises API
-const cors = require('cors');
+const bodyParser = require('body-parser');
+const fs = require('fs');
 const path = require('path');
-
 const app = express();
 const port = 3000;
 
-// 启用 CORS
-app.use(cors());
-app.use(express.json());
+// Middleware
+app.use(bodyParser.json({ limit: '50mb' }));
+app.use(express.static('./')); 
 
-// MQTT 配置
-const broker = 'wss://joesdevices.cloud.shiftr.io:443';
-const options = {
-    clean: true,
-    connectTimeout: 4000,
-    clientId: 'serverClient-' + Math.floor(Math.random()*1000000),
-    username: 'joesdevices',
-    password: 'YOUR_TOKEN'  // 替换为你的 shiftr.io token
-};
-
-// 数据文件路径
-const dataFilePath = path.join(__dirname, 'noise_data.json');
-
-// 数据结构
-let noiseData = {
-    data: []
-};
-
-// 初始化数据文件
-async function initDataFile() {
-    try {
-        // 尝试读取现有文件
-        const data = await fs.readFile(dataFilePath, 'utf8');
-        noiseData = JSON.parse(data);
-        console.log('Loaded existing data file');
-    } catch (error) {
-        // 如果文件不存在，创建新文件
-        await fs.writeFile(dataFilePath, JSON.stringify(noiseData, null, 2));
-        console.log('Created new data file');
-    }
+// Create data directory if it doesn't exist
+const DATA_DIR = path.join(__dirname, 'data');
+const CSV_DIR = path.join(DATA_DIR, 'csv');
+if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR);
+    console.log('Created data directory');
+}
+if (!fs.existsSync(CSV_DIR)) {
+    fs.mkdirSync(CSV_DIR);
+    console.log('Created CSV directory');
 }
 
-// 保存数据到文件
-async function saveData() {
-    try {
-        await fs.writeFile(dataFilePath, JSON.stringify(noiseData, null, 2));
-        console.log('Data saved successfully');
-    } catch (error) {
-        console.error('Error saving data:', error);
-    }
+// Get new york timezone datetime string
+function getNYDateTime() {
+    return new Date().toLocaleString('en-US', { 
+        timeZone: 'America/New_York',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+    }).replace(/(\d+)\/(\d+)\/(\d+),\s(\d+):(\d+):(\d+)/, '$3-$1-$2T$4:$5:$6');
 }
 
-// 连接到 MQTT broker
-const client = mqtt.connect(broker, options);
+// Get new york timezone date (YYYY-MM-DD)
+function getNYDate() {
+    return getNYDateTime().split('T')[0];
+}
 
-client.on('connect', () => {
-    console.log('Connected to MQTT broker');
-    client.subscribe('noise/level', (err) => {
-        if (err) {
-            console.error('Subscribe error:', err);
-        } else {
-            console.log('Subscribed to noise/level');
-        }
-    });
-});
-
-// 处理接收到的 MQTT 消息
-client.on('message', async (topic, message) => {
-    if (topic === 'noise/level') {
-        const noiseLevel = parseFloat(message.toString());
-        if (!isNaN(noiseLevel)) {
-            const timestamp = new Date().toISOString();
-            const newDataPoint = {
-                timestamp: timestamp,
-                value: noiseLevel
-            };
-            
-            console.log('Received new data:', newDataPoint);
-            
-            // 添加新数据点
-            noiseData.data.push(newDataPoint);
-            
-            // 移除超过24小时的数据
-            const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-            noiseData.data = noiseData.data.filter(item => 
-                new Date(item.timestamp) > twentyFourHoursAgo
-            );
-            
-            // 保存到文件
-            await saveData();
-        }
-    }
-});
-
-client.on('error', (error) => {
-    console.error('MQTT Error:', error);
-});
-
-// API 端点
-app.get('/api/noise-data', async (req, res) => {
+// Route to store noise data
+app.post('/store/noise', (req, res) => {
     try {
-        // 直接返回内存中的数据
-        res.json(noiseData);
+        const data = req.body;
+        if (!data) {
+            return res.status(400).json({ error: 'Invalid data format' });
+        }
+        
+        // Use ny timezone time instead of original timestamp
+        const nyDateTime = getNYDateTime();
+        const nyDate = getNYDate();
+        
+        // Create csv file with noise level
+        const csvFilePath = path.join(CSV_DIR, `noise_${nyDate}.csv`);
+        
+        // Create or append to csv
+        if (!fs.existsSync(csvFilePath)) {
+            console.log(`Creating new noise CSV file for date: ${nyDate}`);
+            fs.writeFileSync(csvFilePath, 'timestamp,noiseLevel\n');
+        }
+        
+        // Append the new data point
+        fs.appendFileSync(csvFilePath, `${nyDateTime},${data.noiseLevel}\n`);
+        
+        res.status(200).json({ success: true, message: 'Noise data stored' });
     } catch (error) {
-        console.error('Error serving data:', error);
-        res.status(500).json({ error: 'Failed to retrieve data' });
+        console.error('Error storing noise data:', error);
+        res.status(500).json({ error: 'Failed to store data', details: error.message });
     }
 });
 
-// 启动服务器
-async function startServer() {
+// Route to store frequency data
+app.post('/store/frequency', (req, res) => {
     try {
-        await initDataFile();
-        app.listen(port, () => {
-            console.log(`Server running at http://localhost:${port}`);
+        const data = req.body;
+        if (!data || !data.frequencies || !data.magnitudes) {
+            return res.status(400).json({ error: 'Invalid data format' });
+        }
+        
+        // Use ny timezone time instead of original timestamp
+        const nyDateTime = getNYDateTime();
+        const nyDate = getNYDate();
+        
+        // Create a csv file for frequency data
+        const csvFilePath = path.join(CSV_DIR, `frequency_${nyDate}.csv`);
+        
+        // Create or append to csv
+        if (!fs.existsSync(csvFilePath)) {
+            console.log(`Creating new frequency CSV file for date: ${nyDate}`);
+            // Create header row with frequency values
+            let header = 'timestamp';
+            data.frequencies.forEach(freq => {
+                header += `,${freq}Hz`;
+            });
+            fs.writeFileSync(csvFilePath, header + '\n');
+        }
+        
+        // Append the new data point
+        let row = nyDateTime;
+        data.magnitudes.forEach(magnitude => {
+            row += `,${magnitude}`;
         });
+        fs.appendFileSync(csvFilePath, row + '\n');
+        
+        res.status(200).json({ success: true, message: 'Frequency data stored' });
     } catch (error) {
-        console.error('Failed to start server:', error);
-        process.exit(1);
+        console.error('Error storing frequency data:', error);
+        res.status(500).json({ error: 'Failed to store data', details: error.message });
     }
+});
+
+// Check for date change at midnight to create new files
+function setupDailyFileCreation() {
+    // Function to create empty files for a new day
+    function createNewDayFiles() {
+        const today = getNYDate();
+        console.log(`Creating empty files for new day: ${today}`);
+        
+        // Create empty csv files with headers only
+        fs.writeFileSync(path.join(CSV_DIR, `noise_${today}.csv`), 'timestamp,noiseLevel\n');
+        
+        console.log(`New day's files created for ${today}`);
+    }
+    
+    // Calculate time until midnight in ny timezone
+    function scheduleNextDayFiles() {
+        // Get current ny time
+        const nyDate = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+        
+        // Set tomorrow midnight in ny time
+        const tomorrow = new Date(nyDate);
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        tomorrow.setHours(0, 0, 5, 0); // 00:00:05 to avoid exactly midnight
+        
+        // Calculate milliseconds until tomorrow midnight
+        const timeUntilMidnight = tomorrow - nyDate;
+        console.log(`Next day's files will be created in ${Math.round(timeUntilMidnight/1000/60)} minutes (NY time)`);
+        
+        setTimeout(() => {
+            createNewDayFiles();
+            scheduleNextDayFiles(); // Schedule for the next day
+        }, timeUntilMidnight);
+    }
+    
+    // Start the scheduling
+    scheduleNextDayFiles();
 }
 
-startServer();
+// Start the server
+app.listen(port, () => {
+    console.log(`Noise monitoring server running at http://localhost:${port}`);
+    console.log(`Data storage directory: ${DATA_DIR}`);
+    console.log(`Current NY time: ${getNYDateTime()}`);
+    setupDailyFileCreation();
+});

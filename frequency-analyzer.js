@@ -382,4 +382,4 @@ document.addEventListener('DOMContentLoaded', function() {
             frequencyChart.update();
         }
     };
-});
+})

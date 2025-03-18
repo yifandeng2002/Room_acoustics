@@ -146,7 +146,7 @@ let lastCurrentNoiseUpdate = 0;
 let lastChartUpdate = 0;
 let lastDailyAverageUpdate = 0;
 const CURRENT_NOISE_UPDATE_INTERVAL = 10000; 
-const CHART_UPDATE_INTERVAL = 10000;
+const CHART_UPDATE_INTERVAL = 30000;
 const DAILY_AVERAGE_UPDATE_INTERVAL = 60000;
 
 function handleNoiseLevel(value) {
@@ -384,7 +384,7 @@ function setupCharts() {
               borderWidth: 2,
               backgroundColor: gradientfill,
               fill: true,
-              tension: 0.5
+              tension: 0.2
             }]
           },
           options: {
@@ -476,16 +476,42 @@ function setupCharts() {
 }
 
 function updateNoiseChart() {
-    if (!noiseChart) return;
-    noiseChart.data.datasets[0].data = noiseHistory.map(item => ({
-        x: item.time,
-        y: item.value
-    }));
+    if (!noiseChart) return;  
+    // group the history data into 10 sec interval
+    const CHARTINTERVAL = 30000; 
+    let groupedData = []; 
+    if (noiseHistory.length > 0) {
+        // earliest data
+        const startTime = noiseHistory[0].time.getTime();
+        const endTime = Date.now();   
+        // time bucket for every 10 second
+        for (let bucketStart = Math.floor(startTime / CHARTINTERVAL) * CHARTINTERVAL; 
+             bucketStart <= endTime; 
+             bucketStart += CHARTINTERVAL) {  
+            const bucketEnd = bucketStart + CHARTINTERVAL; 
+            // all data points within the 10 second
+            const pointsInBucket = noiseHistory.filter(item => {
+                const itemTime = item.time.getTime();
+                return itemTime >= bucketStart && itemTime < bucketEnd;
+            });
+            const sum = pointsInBucket.reduce((total, item) => total + item.value, 0);
+            const average = sum / pointsInBucket.length;    
+            // create data point at the center
+            groupedData.push({
+                    x: new Date(bucketStart + CHARTINTERVAL / 2),
+                    y: average
+            });
+            
+        }
+    }
     
-    //update the time window
+    // update chart
+    noiseChart.data.datasets[0].data = groupedData;
+    
+    // update time window
     const now = Date.now();
-    noiseChart.options.scales.x.min = now - 0.2 * 60 * 60 * 1000;
-    noiseChart.options.scales.x.max = now;
+    noiseChart.options.scales.x.min = now - 0.2 * 60 * 60 * 1000; // 12 min
+    noiseChart.options.scales.x.max = now; 
     noiseChart.update();
 }
 
