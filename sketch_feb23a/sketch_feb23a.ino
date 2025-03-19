@@ -476,7 +476,7 @@ void initializeWiFi() {
         display.display();
         delay(2000);
         
-        // 重置设备
+        //// 重置设备
         NVIC_SystemReset();
     }
 }
